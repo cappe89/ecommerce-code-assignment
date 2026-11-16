@@ -1,0 +1,31 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": ".e2e-spec.ts$",
+  "testTimeout": 90000,
+  "transform": {
+    "^.+\\.(t|j)s$": [
+      "@swc/jest",
+      {
+        "jsc": {
+          "parser": {
+            "syntax": "typescript",
+            "decorators": true
+          },
+          "transform": {
+            "legacyDecorator": true,
+            "decoratorMetadata": true,
+            "useDefineForClassFields": false
+          }
+        }
+      }
+    ]
+  },
+  "transformIgnorePatterns": [
+    "node_modules[\\\\/](?!(@nestjs)/)"
+  ],
+  "moduleNameMapper": {
+    "^@/(.*)$": "<rootDir>/../src/$1"
+  }
+}
