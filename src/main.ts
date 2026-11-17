@@ -15,10 +15,12 @@ async function bootstrap() {
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Products Microservice')
     .setDescription(
-      'Production-grade e-commerce catalog microservice built with NestJS, Sequelize, and MySQL. Features strict validation, soft delete, optimistic concurrency locking, and distributed tracing.',
+      'Production-grade e-commerce catalog microservice built with NestJS, Sequelize, and MySQL. Features strict validation, soft delete, optimistic concurrency locking, distributed tracing, and an Orders/Checkout module.\n\n' +
+        '📄 **OpenAPI Spec:** [Scarica JSON](/api/docs-json) | [Scarica YAML](/api/docs-yaml)',
     )
     .setVersion('1.0')
     .addTag('products', 'Product catalog management endpoints')
+    .addTag('orders', 'Checkout and BNPL installment orders (programmatic consumer)')
     .addApiKey(
       {
         type: 'apiKey',

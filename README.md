@@ -57,6 +57,14 @@ ecommerce-code-assignment/
 │   │       └── request-id.interceptor.ts
 │   ├── database/
 │   │   └── database.module.ts    # Configurazione Sequelize per MySQL
+│   ├── orders/                   # Consumatore programmatico di ProductsModule (Checkout / BNPL)
+│   │   ├── dto/
+│   │   │   ├── create-order.dto.ts
+│   │   │   └── order-response.dto.ts
+│   │   ├── orders.controller.ts
+│   │   ├── orders.module.ts
+│   │   ├── orders.service.ts
+│   │   └── orders.service.spec.ts
 │   ├── products/
 │   │   ├── dto/
 │   │   │   ├── create-product.dto.ts
@@ -68,14 +76,20 @@ ecommerce-code-assignment/
 │   │   ├── products.module.ts
 │   │   ├── products.service.ts
 │   │   └── products.service.spec.ts  # Unit Test isolati con Mock
+│   ├── seeder/                   # Auto-popolamento catalogo (OnApplicationBootstrap)
+│   │   ├── catalog-seeder.service.ts
+│   │   ├── catalog-seeder.service.spec.ts
+│   │   └── seeder.module.ts
 │   ├── app.module.ts
 │   ├── main.ts                   # Entry point con Swagger OpenAPI
 │   └── setup-app.ts              # Configurazione condivisa (App + E2E Tests)
 ├── test/
 │   ├── jest-e2e.json
 │   └── products.e2e-spec.ts      # Test E2E di integrazione contro MySQL reale
-├── .env.example
-├── .env.test
+├── .env                          # Ambiente Produzione / Rilascio pulito (NODE_ENV=production, DB_SYNC=false)
+├── .env.development              # Ambiente Sviluppo Locale (NODE_ENV=development, auto-seeding attivo)
+├── .env.example                  # Template documentato di riferimento
+├── .env.test                     # Ambiente Test E2E dedicato (NODE_ENV=test, ecommerce_test)
 ├── docker-compose.yml            # MySQL 8.0 preconfigurato con healthcheck
 └── package.json
 ```
@@ -104,26 +118,33 @@ docker compose ps
 ```
 
 ### 3. Configurare le variabili d'ambiente
-I file `.env` e `.env.test` sono già pronti all'uso. Se necessario, personalizzarli partendo da `.env.example`:
-```env
-PORT=3000
-NODE_ENV=development
+Il progetto adotta una rigorosa separazione degli ambienti:
 
-DB_HOST=localhost
-DB_PORT=3306
-DB_USERNAME=ecommerce_user
-DB_PASSWORD=ecommerce_pass
-DB_NAME=ecommerce
-DB_LOGGING=false
-DB_SYNC=true
-```
+- **`.env.development`** (Sviluppo Locale): preconfigurato per `NODE_ENV=development`, con `DB_SYNC=true` e il seeder di dati demo abilitato per testare subito le API:
+  ```env
+  PORT=3000
+  NODE_ENV=development
+  DB_HOST=localhost
+  DB_PORT=3306
+  DB_USERNAME=ecommerce_user
+  DB_PASSWORD=ecommerce_pass
+  DB_NAME=ecommerce
+  DB_LOGGING=false
+  DB_SYNC=true
+  ```
+- **`.env`** (Produzione / Rilascio): ambiente pulito e sicuro per la produzione, con `NODE_ENV=production` e `DB_SYNC=false` (lo schema non viene alterato automaticamente e il seeder demo viene tassativamente escluso).
+- **`.env.test`** (Test E2E): punta al database isolato `ecommerce_test`.
 
 ### 4. Avviare il Microservizio
+I comandi npm sono configurati con `cross-env` per garantire compatibilità multipiattaforma (Windows, macOS, Linux):
 ```bash
-# Modalità Sviluppo (Watch mode)
+# Modalità Sviluppo Locale (carica .env.development, auto-seeder attivo)
 npm run start:dev
 
-# Modalità Produzione
+# Modalità Sviluppo senza watch
+npm start
+
+# Modalità Produzione / Rilascio (carica .env con NODE_ENV=production, seeder escluso)
 npm run build
 npm run start:prod
 ```
@@ -136,6 +157,11 @@ Il servizio sarà in ascolto su: `http://localhost:3000`
 
 Una volta avviato il servizio, la documentazione Swagger interattiva è accessibile all'indirizzo:
 👉 **[http://localhost:3000/api/docs](http://localhost:3000/api/docs)**
+
+### 📥 Download della Specifica OpenAPI (JSON / YAML)
+Per importare le API in tool come Postman, Insomnia o generatori di client SDK, la specifica OpenAPI grezza è esportata ed accessibile direttamente ai seguenti endpoint:
+- **OpenAPI JSON:** [http://localhost:3000/api/docs-json](http://localhost:3000/api/docs-json)
+- **OpenAPI YAML:** [http://localhost:3000/api/docs-yaml](http://localhost:3000/api/docs-yaml)
 
 ---
 
@@ -372,3 +398,117 @@ Tutti gli errori HTTP restituiti dall'applicazione seguono uno schema uniforme:
   "requestId": "e4b6c31a-0518-4a11-8fc0-192a6b2c4d92"
 }
 ```
+
+---
+
+## 💻 Utilizzo Programmatico del Modulo NestJS (Dependency Injection)
+
+Oltre all'esposizione tramite API REST/HTTP, `ProductsModule` esporta `ProductsService` per permettere ad altri moduli della piattaforma di interagire direttamente con il catalogo tramite la **Dependency Injection** nativa di NestJS. Nel progetto sono implementati e funzionanti **due use case reali**:
+
+---
+
+### Caso 1: Modulo `OrdersModule` (Checkout con Rateizzazione Scalapay 3x)
+Simula il flusso di checkout di una piattaforma e-commerce / BNPL (Buy Now Pay Later). L'`OrdersService` consuma programmaticamente `ProductsService`:
+1. **Verifica esistenza e prezzo**: invoca `productsService.findOne(productId)`.
+2. **Validazione disponibilità**: controlla che la quantità richiesta sia disponibile in magazzino.
+3. **Decremento concorrente protetto**: invoca `productsService.updateStock(productId, { stock: newStock, version: product.version })` sfruttando l'Optimistic Locking contro gli over-selling concorrenti.
+4. **Calcolo finanziario esatto**: genera il piano di pagamento in 3 rate a tasso zero stile Scalapay (con compensazione esatta dei centesimi).
+
+#### Iniezione ed Esecuzione in `OrdersService`:
+```typescript
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { ProductsService } from '../products/products.service';
+import { CreateOrderDto } from './dto/create-order.dto';
+import { OrderResponseDto } from './dto/order-response.dto';
+
+@Injectable()
+export class OrdersService {
+  constructor(private readonly productsService: ProductsService) {}
+
+  async createOrder(dto: CreateOrderDto, requestId?: string): Promise<OrderResponseDto> {
+    // 1. Lettura programmatica da ProductsService
+    const product = await this.productsService.findOne(dto.productId, requestId);
+
+    if (product.stock < dto.quantity) {
+      throw new BadRequestException(`Insufficient stock for product "${product.name}"`);
+    }
+
+    // 2. Aggiornamento programmatico con Optimistic Locking
+    const updated = await this.productsService.updateStock(
+      product.id,
+      { stock: product.stock - dto.quantity, version: product.version },
+      requestId,
+    );
+
+    // 3. Calcolo rate Scalapay BNPL (totale diviso in 3 rate)
+    const totalAmount = Number((product.price * dto.quantity).toFixed(2));
+    const installments = this.calculateInstallments(totalAmount);
+
+    return {
+      orderId: `ord-${randomUUID().slice(0, 8)}`,
+      productId: product.id,
+      productName: product.name,
+      unitPrice: product.price,
+      quantity: dto.quantity,
+      totalAmount,
+      installments,
+      remainingStock: updated.stock,
+      createdAt: new Date().toISOString(),
+    };
+  }
+}
+```
+
+#### Esempio di Chiamata API Checkout (`POST /orders`)
+
+**Richiesta:**
+```bash
+curl -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -H "X-Request-Id: checkout-trace-001" \
+  -d '{
+    "productId": 1,
+    "quantity": 2
+  }'
+```
+
+**Risposta di successo (`201 Created`):**
+```json
+{
+  "orderId": "ord-7f3b8a1c",
+  "productId": 1,
+  "productName": "Sony WH-1000XM5 Wireless Headphones",
+  "unitPrice": 349.99,
+  "quantity": 2,
+  "totalAmount": 699.98,
+  "installments": [
+    {
+      "installmentNumber": 1,
+      "amount": 233.33,
+      "dueDate": "2026-11-16"
+    },
+    {
+      "installmentNumber": 2,
+      "amount": 233.33,
+      "dueDate": "2026-12-16"
+    },
+    {
+      "installmentNumber": 3,
+      "amount": 233.32,
+      "dueDate": "2027-01-15"
+    }
+  ],
+  "remainingStock": 48,
+  "createdAt": "2026-11-16T22:50:00.000Z"
+}
+```
+
+---
+
+### Caso 2: `CatalogSeederService` (Auto-popolamento per Sviluppo Locale)
+Implementa il lifecycle hook `OnApplicationBootstrap` di NestJS in `src/seeder/catalog-seeder.service.ts`:
+1. All'avvio dell'applicazione, verifica l'ambiente: viene eseguito **esclusivamente se `NODE_ENV === 'development'`** (impostato automaticamente tramite `npm run start:dev` o `npm start` con `.env.development`).
+2. Se il database è vuoto (`total === 0`), inserisce 4 prodotti di test realistici (Sony Headphones, iPhone 15, MacBook Air, Logitech Mouse) tramite chiamate successive a `productsService.create()`.
+3. In produzione (`.env`, `npm run start:prod`) e nei test (`NODE_ENV === 'test'`), l'auto-seeder viene **tassativamente ignorato** per garantire la sicurezza dei dati di produzione e l'isolamento deterministico dei test.
+
+In questo modo, chi sviluppa o recensisce il codice in locale trova subito il catalogo popolato ed esplorabile su Swagger, mentre l'ambiente di produzione (`.env`) rimane pulito e protetto.
