@@ -1,6 +1,6 @@
 # Products Microservice (NestJS + Sequelize + MySQL)
 
-A production-grade backend microservice for e-commerce product catalog and inventory management, built with **NestJS**, **Sequelize ORM**, **MySQL 8.0**, and **TypeScript**.
+A production-grade backend microservice for e-commerce product catalog and inventory management, built with **NestJS**, **Sequelize ORM**, **MySQL 8.4 LTS**, and **TypeScript**.
 
 The project is architected following principles of robustness, distributed observability, referential consistency, and concurrency control (Optimistic Locking).
 
@@ -89,8 +89,12 @@ ecommerce-code-assignment/
 ├── .env                          # Clean Production / Release environment (NODE_ENV=production, DB_SYNC=false)
 ├── .env.development              # Local Development environment (NODE_ENV=development, auto-seeding enabled)
 ├── .env.example                  # Documented reference template
+├── .env.production.example       # Template for production Docker Compose deployments
 ├── .env.test                     # Dedicated E2E Test environment (NODE_ENV=test, ecommerce_test)
-├── docker-compose.yml            # Preconfigured MySQL 8.0 with healthcheck
+├── .dockerignore                 # Exclusions for lean Docker build context
+├── Dockerfile                    # Multi-stage production Dockerfile (Alpine, non-root user, dumb-init)
+├── docker-compose.yml            # Local development compose (MySQL only)
+├── docker-compose.prod.yml       # Production-ready full stack compose (App + MySQL + isolated network)
 └── package.json
 ```
 
@@ -108,7 +112,7 @@ npm install
 ```
 
 ### 2. Start MySQL Database with Docker Compose
-The `docker-compose.yml` file spins up a configured MySQL 8.0 container and automatically creates the `ecommerce` and `ecommerce_test` databases:
+The `docker-compose.yml` file spins up a configured MySQL 8.4 LTS container and automatically creates the `ecommerce` and `ecommerce_test` databases:
 ```bash
 docker compose up -d
 ```
@@ -165,6 +169,93 @@ To import APIs into tools like Postman, Insomnia, or client SDK generators, raw 
 
 ---
 
+## 🐳 Docker & Production Release
+
+The repository provides a production-grade containerization setup tailored for zero-downtime, security, and enterprise deployment standards.
+
+### 1. Architecture of Docker Files
+
+| File | Purpose | Key Features |
+| :--- | :--- | :--- |
+| **`Dockerfile`** | Multi-stage image build | `node:20-alpine`, multi-stage (builder/production), non-root `USER node`, process handling via `dumb-init`, native `HEALTHCHECK`. |
+| **`.dockerignore`** | Build context optimizer | Excludes `node_modules/`, `dist/`, `.env*`, tests, and coverage to guarantee minimal image size and eliminate credential leak risks. |
+| **`docker-compose.prod.yml`** | Production orchestration | Complete stack (App + MySQL) with container readiness dependency (`service_healthy`), isolated bridge network, log rotation, and no exposed public DB ports. |
+| **`.env.production.example`** | Environment template | Reference config with `NODE_ENV=production`, `DB_HOST=mysql`, `DB_SYNC=false` (prevents destructive DDL schema syncs in production). |
+
+### 2. Multi-Stage Dockerfile Highlights
+
+- **Lightweight Footprint:** The final production image only includes production dependencies and compiled JavaScript artifacts (`dist/`), discarding TypeScript compilers, testing tools, and devDependencies.
+- **Security Best Practices:** Executes under the unprivileged `node` user instead of `root`, complying with OWASP and CIS Docker security guidelines.
+- **Graceful Shutdown:** Uses `dumb-init` as PID 1 to properly capture Unix signals (`SIGTERM`, `SIGINT`), allowing NestJS to finish in-flight requests and cleanly close database connection pools during container teardown.
+- **Healthcheck Ready:** Automatically probes `http://localhost:3000/api/docs` every 30 seconds to report container health to container orchestrators (Docker Swarm, Kubernetes, AWS ECS).
+
+### 3. Quick Commands
+
+#### Start the Full Production Stack (App + Database)
+```bash
+# Using npm script:
+npm run docker:prod:up
+
+# Or directly with Docker Compose:
+docker-compose -p ecommerce-prod -f docker-compose.prod.yml up -d --build
+```
+
+The production microservice is exposed on standard HTTP port **80** (configurable via `APP_PORT`). Once started, Swagger documentation is available at:
+👉 **`http://localhost/api/docs`** (or `http://<your-server-ip>/api/docs`)
+
+#### Monitor Container Status and Logs
+```bash
+# Check container status
+docker-compose -p ecommerce-prod -f docker-compose.prod.yml ps
+
+# Follow live aggregated logs
+npm run docker:prod:logs
+# or: docker-compose -p ecommerce-prod -f docker-compose.prod.yml logs -f
+```
+
+#### Stop the Production Stack
+```bash
+npm run docker:prod:down
+# or: docker-compose -p ecommerce-prod -f docker-compose.prod.yml down
+```
+
+#### Standalone Image Build (for CI/CD Registry Push)
+```bash
+npm run docker:build
+# or: docker build -t ecommerce-products-microservice:latest .
+```
+
+### 4. Database Schema Creation in Production (Without `DB_SYNC`)
+
+In production environments, running with `DB_SYNC=true` is strictly prohibited because automatic ORM synchronization can accidentally alter tables, lock tables, or drop indexes during application boot.
+
+To manage schema creation safely and deterministically without `DB_SYNC`, a standalone synchronization script [`src/scripts/sync-schema.ts`](file:///c:/Users/AlessandroCappellett/source/repos/ecommerce-code-assignment/src/scripts/sync-schema.ts) is provided.
+
+The script initializes the application context, loads the Sequelize models, establishes a connection to the target MySQL instance, executes a safe schema synchronization (`sequelize.sync()`), and immediately terminates without impacting live application traffic:
+
+```bash
+# Option 1: Execute directly inside the running production container
+npm run docker:prod:sync
+# or: docker exec -it ecommerce_prod_app node dist/scripts/sync-schema.js
+
+# Option 2: Execute locally against the target database
+npm run db:sync
+```
+
+#### 💡 Architectural Note for Production Evolution: Database Migrations & Rollback (`up` / `down`)
+
+> In the scope of this assignment, the standalone `sync-schema` script provides a clean and automated way to bootstrap the schema without polluting runtime startup with `DB_SYNC=true`.
+>
+> However, for an **enterprise mission-critical production platform**, schema evolution should transition from declarative model syncing to **explicit, version-controlled database migrations** (e.g., using `sequelize-cli` or dedicated migration engines like Flyway / Umzug / Liquibase):
+>
+> 1. **Bi-directional Migrations (`up` / `down`)**:
+>    - **`up` script**: applies forward schema evolutions (e.g., adding nullable columns, creating composite indexes, or partitioning).
+>    - **`down` script**: provides an automated, deterministic rollback path to revert schema changes cleanly if a deployment fails or triggers critical application regressions, avoiding catastrophic downtime or manual DB surgery.
+> 2. **Migration History Tracking**: A dedicated `SequelizeMeta` table records which migrations have run, ensuring idempotent deployments across multi-replica clusters.
+> 3. **Zero-Downtime & CI/CD Pipelines**: Migrations should run as isolated pre-deployment jobs (e.g., Kubernetes `initContainer` or CI/CD pre-rollout stage) following the **Expand & Contract** pattern (backward-compatible changes) rather than executing inside long-running application pods.
+
+---
+
 ## 🧪 Running Tests
 
 ### 1. Unit Tests (`ProductsService`)
@@ -173,7 +264,7 @@ Runs unit tests in complete isolation by mocking the Sequelize Model (`getModelT
 npm test
 ```
 
-### 2. E2E Integration Tests (Against Real MySQL 8.0)
+### 2. E2E Integration Tests (Against Real MySQL 8.4 LTS)
 E2E tests run on the dedicated `ecommerce_test` database to authentically verify MySQL behavior (DECIMAL, UNIQUE constraints, Soft Delete with `{ paranoid: false }`, and concurrent Optimistic Locking with `Promise.all`):
 ```bash
 npm run test:e2e

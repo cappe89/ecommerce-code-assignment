@@ -1,0 +1,80 @@
+name: ecommerce-prod
+
+services:
+  # ========================================================
+  # MySQL Database Service (Production)
+  # ========================================================
+  mysql:
+    image: mysql:8.4
+    container_name: ecommerce_prod_mysql
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --mysql-native-password=ON
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-prod_root_password_change_me}
+      MYSQL_DATABASE: ${DB_NAME:-ecommerce}
+      MYSQL_USER: ${DB_USERNAME:-ecommerce_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-ecommerce_pass}
+    volumes:
+      - mysql_prod_data:/var/lib/mysql
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - ecommerce_network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD:-prod_root_password_change_me} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Note for Production: Do not expose port 3306 directly to the public network.
+    # If DBA access is needed from localhost only, uncomment the line below:
+    # ports:
+    #   - '127.0.0.1:3306:3306'
+
+  # ========================================================
+  # NestJS Products Microservice (Production)
+  # ========================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: ecommerce_prod_app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-ecommerce}
+      DB_USERNAME: ${DB_USERNAME:-ecommerce_user}
+      DB_PASSWORD: ${DB_PASSWORD:-ecommerce_pass}
+      DB_LOGGING: ${DB_LOGGING:-false}
+      DB_SYNC: ${DB_SYNC:-false}
+    ports:
+      - '${APP_PORT:-80}:3000'
+    networks:
+      - ecommerce_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mysql_prod_data:
+    driver: local
+
+networks:
+  ecommerce_network:
+    driver: bridge

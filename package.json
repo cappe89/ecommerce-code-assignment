@@ -16,7 +16,15 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand --detectOpenHandles"
+    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand --detectOpenHandles",
+    "docker:build": "docker build -t ecommerce-products-microservice:latest .",
+    "docker:dev:up": "docker-compose up -d",
+    "docker:dev:down": "docker-compose down",
+    "docker:prod:up": "docker-compose -p ecommerce-prod -f docker-compose.prod.yml up -d --build",
+    "docker:prod:down": "docker-compose -p ecommerce-prod -f docker-compose.prod.yml down",
+    "docker:prod:logs": "docker-compose -p ecommerce-prod -f docker-compose.prod.yml logs -f",
+    "docker:prod:sync": "docker exec -it ecommerce_prod_app node dist/scripts/sync-schema.js",
+    "db:sync": "cross-env ts-node -r tsconfig-paths/register src/scripts/sync-schema.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.5.1",
