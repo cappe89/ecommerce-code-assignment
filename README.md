@@ -1,51 +1,51 @@
 # Products Microservice (NestJS + Sequelize + MySQL)
 
-Microservizio backend production-grade per la gestione del catalogo prodotti e dell'inventario e-commerce, sviluppato con **NestJS**, **Sequelize ORM**, **MySQL 8.0** e **TypeScript**.
+A production-grade backend microservice for e-commerce product catalog and inventory management, built with **NestJS**, **Sequelize ORM**, **MySQL 8.0**, and **TypeScript**.
 
-Il progetto è architettato seguendo i principi di robustezza, osservabilità distribuita, consistenza referenziale e protezione dalla concorrenza (Optimistic Locking).
+The project is architected following principles of robustness, distributed observability, referential consistency, and concurrency control (Optimistic Locking).
 
 ---
 
-## 🏛️ Architettura e Scelte di Design
+## 🏛️ Architecture & Design Choices
 
-### 1. Modello Dati e Performance Database
-- **Soft Delete (`paranoid: true`)**: L'eliminazione di un prodotto tramite `DELETE /products/:id` non rimuove fisicamente la riga dal database, ma valorizza il campo `deletedAt`. In questo modo si garantisce l'integrità referenziale degli ordini storici. Le query Sequelize escludono automaticamente i record eliminati logicamente.
-- **Optimistic Locking (`version: true`)**: Ogni record include un campo `version` (default 1). Durante l'aggiornamento dello stock (`PATCH /products/:id/stock`), Sequelize verifica e incrementa atomicamente la versione. Qualora due transazioni concorrenti tentino di modificare lo stesso prodotto, la seconda fallisce sollevando un'eccezione `OptimisticLockError`, mappata a `409 Conflict`.
-- **Indici Espliciti**:
-  - `idx_products_product_token_unique`: Indice univoco sul campo di business `productToken`.
-  - `idx_products_created_deleted_at`: Indice composito sui campi `createdAt` e `deletedAt` per ottimizzare le query paginate ed evitare full table scan al crescere del catalogo.
-- **Integrità Finanziaria (`DECIMAL 10,2`)**: Il campo `price` è memorizzato come `DECIMAL(10, 2)` per prevenire errori di arrotondamento floating-point tipici delle operazioni e-commerce.
+### 1. Data Model and Database Performance
+- **Soft Delete (`paranoid: true`)**: Deleting a product via `DELETE /products/:id` does not physically remove the row from the database; instead, it populates the `deletedAt` field. This guarantees the referential integrity of historical orders. Sequelize queries automatically exclude logically deleted records.
+- **Optimistic Locking (`version: true`)**: Each record includes a `version` field (default 1). When updating stock (`PATCH /products/:id/stock`), Sequelize atomically verifies and increments the version. If two concurrent transactions attempt to modify the same product, the second fails by throwing an `OptimisticLockError`, mapped to `409 Conflict`.
+- **Explicit Indexes**:
+  - `idx_products_product_token_unique`: Unique index on the business field `productToken`.
+  - `idx_products_created_deleted_at`: Composite index on `createdAt` and `deletedAt` to optimize paginated queries and avoid full table scans as the catalog grows.
+- **Financial Integrity (`DECIMAL 10,2`)**: The `price` field is stored as `DECIMAL(10, 2)` to prevent floating-point rounding errors typical of e-commerce transactions.
 
-### 2. Osservabilità e Tracing (`X-Request-Id`)
-- Ogni richiesta HTTP viene tracciata tramite l'header `X-Request-Id`.
-- Il `RequestIdInterceptor` legge l'header in ingresso se fornito dal client o dal reverse proxy, oppure genera automaticamente un UUID v4.
-- Il Correlation ID viene propagato:
-  1. Nei log applicativi strutturati del `Logger` di NestJS.
-  2. Negli header HTTP di risposta (`X-Request-Id`).
-  3. Nel payload JSON in caso di errore (`requestId`).
+### 2. Observability and Tracing (`X-Request-Id`)
+- Every HTTP request is tracked via the `X-Request-Id` header.
+- The `RequestIdInterceptor` reads the incoming header if provided by the client or reverse proxy, or generates a UUID v4 automatically.
+- The Correlation ID is propagated across:
+  1. NestJS `Logger` structured application logs.
+  2. HTTP response headers (`X-Request-Id`).
+  3. The error response JSON payload (`requestId`).
 
-### 3. Validazione e Sicurezza
-- **`ValidationPipe` centralizzato**: Configurato con `whitelist: true`, `forbidNonWhitelisted: true`, `transform: true`.
-- **Prevenzione OOM / Query Abuse**: Il parametro di paginazione `limit` è rigorosamente limitato a un massimo di `@Max(100)`. Richieste con valori superiori (es. `limit=500`) o payload contenenti campi non autorizzati vengono respinte con `400 Bad Request`.
-- **Integrità Stock**: Lo stock non può mai assumere valori negativi (`@Min(0)` sui DTO e vincolo a livello di schema).
+### 3. Validation and Security
+- **Centralized `ValidationPipe`**: Configured with `whitelist: true`, `forbidNonWhitelisted: true`, `transform: true`.
+- **OOM / Query Abuse Prevention**: The pagination `limit` parameter is strictly capped at a maximum of `@Max(100)`. Requests with higher values (e.g., `limit=500`) or payloads containing unauthorized fields are rejected with `400 Bad Request`.
+- **Stock Integrity**: Stock can never be negative (`@Min(0)` on DTOs and schema-level constraint).
 
 ### 4. Global Exception Filter
-Un filtro globale (`GlobalExceptionFilter`) intercetta e normalizza gli errori:
-- `SequelizeUniqueConstraintError` ➔ `409 Conflict` (duplicazione `productToken`).
-- `SequelizeOptimisticLockError` ➔ `409 Conflict` (modifica concorrente dello stock).
-- `NotFoundException` ➔ `404 Not Found` (prodotto non esistente o soft-deleted).
-- `BadRequestException` ➔ `400 Bad Request` (errori di validazione DTO).
-- Errori interni non gestiti ➔ `500 Internal Server Error` (senza esporre dettagli interni sensibili).
+A global exception filter (`GlobalExceptionFilter`) intercepts and normalizes errors:
+- `SequelizeUniqueConstraintError` ➔ `409 Conflict` (duplicate `productToken`).
+- `SequelizeOptimisticLockError` ➔ `409 Conflict` (concurrent stock modification).
+- `NotFoundException` ➔ `404 Not Found` (non-existent or soft-deleted product).
+- `BadRequestException` ➔ `400 Bad Request` (DTO validation errors).
+- Unhandled internal errors ➔ `500 Internal Server Error` (without exposing sensitive internal details).
 
 ---
 
-## 📁 Struttura del Progetto
+## 📁 Project Structure
 
 ```text
 ecommerce-code-assignment/
 ├── docker/
-│   └── init-db.sql               # Script di inizializzazione DB (ecommerce + ecommerce_test)
-├── docs/                         # Documentazione PRD, architettura e requisiti
+│   └── init-db.sql               # DB initialization script (ecommerce + ecommerce_test)
+├── docs/                         # PRD, architecture, and requirements documentation
 ├── src/
 │   ├── common/
 │   │   ├── dto/
@@ -56,8 +56,8 @@ ecommerce-code-assignment/
 │   │   └── interceptors/
 │   │       └── request-id.interceptor.ts
 │   ├── database/
-│   │   └── database.module.ts    # Configurazione Sequelize per MySQL
-│   ├── orders/                   # Consumatore programmatico di ProductsModule (Checkout / BNPL)
+│   │   └── database.module.ts    # Sequelize MySQL configuration
+│   ├── orders/                   # Programmatic consumer of ProductsModule (Checkout / BNPL)
 │   │   ├── dto/
 │   │   │   ├── create-order.dto.ts
 │   │   │   └── order-response.dto.ts
@@ -71,56 +71,56 @@ ecommerce-code-assignment/
 │   │   │   ├── query-product.dto.ts
 │   │   │   └── update-stock.dto.ts
 │   │   ├── models/
-│   │   │   └── product.model.ts  # Modello Sequelize (paranoid + version)
+│   │   │   └── product.model.ts  # Sequelize Model (paranoid + version)
 │   │   ├── products.controller.ts
 │   │   ├── products.module.ts
 │   │   ├── products.service.ts
-│   │   └── products.service.spec.ts  # Unit Test isolati con Mock
-│   ├── seeder/                   # Auto-popolamento catalogo (OnApplicationBootstrap)
+│   │   └── products.service.spec.ts  # Isolated Unit Tests with Mocks
+│   ├── seeder/                   # Catalog auto-population (OnApplicationBootstrap)
 │   │   ├── catalog-seeder.service.ts
 │   │   ├── catalog-seeder.service.spec.ts
 │   │   └── seeder.module.ts
 │   ├── app.module.ts
-│   ├── main.ts                   # Entry point con Swagger OpenAPI
-│   └── setup-app.ts              # Configurazione condivisa (App + E2E Tests)
+│   ├── main.ts                   # Entry point with Swagger OpenAPI
+│   └── setup-app.ts              # Shared configuration (App + E2E Tests)
 ├── test/
 │   ├── jest-e2e.json
-│   └── products.e2e-spec.ts      # Test E2E di integrazione contro MySQL reale
-├── .env                          # Ambiente Produzione / Rilascio pulito (NODE_ENV=production, DB_SYNC=false)
-├── .env.development              # Ambiente Sviluppo Locale (NODE_ENV=development, auto-seeding attivo)
-├── .env.example                  # Template documentato di riferimento
-├── .env.test                     # Ambiente Test E2E dedicato (NODE_ENV=test, ecommerce_test)
-├── docker-compose.yml            # MySQL 8.0 preconfigurato con healthcheck
+│   └── products.e2e-spec.ts      # E2E Integration tests against real MySQL
+├── .env                          # Clean Production / Release environment (NODE_ENV=production, DB_SYNC=false)
+├── .env.development              # Local Development environment (NODE_ENV=development, auto-seeding enabled)
+├── .env.example                  # Documented reference template
+├── .env.test                     # Dedicated E2E Test environment (NODE_ENV=test, ecommerce_test)
+├── docker-compose.yml            # Preconfigured MySQL 8.0 with healthcheck
 └── package.json
 ```
 
 ---
 
-## 🚀 Avvio Rapido
+## 🚀 Quick Start
 
-### Prerequisiti
-- **Node.js** (v18+ o v20/v22 consigliato)
-- **Docker** e **Docker Compose**
+### Prerequisites
+- **Node.js** (v18+ or v20/v22 recommended)
+- **Docker** and **Docker Compose**
 
-### 1. Clonare il repository e installare le dipendenze
+### 1. Clone the repository and install dependencies
 ```bash
 npm install
 ```
 
-### 2. Avviare il Database MySQL con Docker Compose
-Il file `docker-compose.yml` avvia un container MySQL 8.0 configurato e crea automaticamente i database `ecommerce` e `ecommerce_test`:
+### 2. Start MySQL Database with Docker Compose
+The `docker-compose.yml` file spins up a configured MySQL 8.0 container and automatically creates the `ecommerce` and `ecommerce_test` databases:
 ```bash
 docker compose up -d
 ```
-Verificare che il database sia attivo:
+Verify that the database is running:
 ```bash
 docker compose ps
 ```
 
-### 3. Configurare le variabili d'ambiente
-Il progetto adotta una rigorosa separazione degli ambienti:
+### 3. Configure environment variables
+The project enforces strict environment separation:
 
-- **`.env.development`** (Sviluppo Locale): preconfigurato per `NODE_ENV=development`, con `DB_SYNC=true` e il seeder di dati demo abilitato per testare subito le API:
+- **`.env.development`** (Local Development): preconfigured for `NODE_ENV=development`, with `DB_SYNC=true` and demo data seeder enabled to test APIs immediately:
   ```env
   PORT=3000
   NODE_ENV=development
@@ -132,49 +132,49 @@ Il progetto adotta una rigorosa separazione degli ambienti:
   DB_LOGGING=false
   DB_SYNC=true
   ```
-- **`.env`** (Produzione / Rilascio): ambiente pulito e sicuro per la produzione, con `NODE_ENV=production` e `DB_SYNC=false` (lo schema non viene alterato automaticamente e il seeder demo viene tassativamente escluso).
-- **`.env.test`** (Test E2E): punta al database isolato `ecommerce_test`.
+- **`.env`** (Production / Release): clean and secure environment for production, with `NODE_ENV=production` and `DB_SYNC=false` (the schema is not altered automatically, and the demo seeder is strictly disabled).
+- **`.env.test`** (E2E Tests): targets the isolated `ecommerce_test` database.
 
-### 4. Avviare il Microservizio
-I comandi npm sono configurati con `cross-env` per garantire compatibilità multipiattaforma (Windows, macOS, Linux):
+### 4. Start the Microservice
+npm commands are configured with `cross-env` to ensure cross-platform compatibility (Windows, macOS, Linux):
 ```bash
-# Modalità Sviluppo Locale (carica .env.development, auto-seeder attivo)
+# Local Development Mode (loads .env.development, auto-seeder active)
 npm run start:dev
 
-# Modalità Sviluppo senza watch
+# Development Mode without watch
 npm start
 
-# Modalità Produzione / Rilascio (carica .env con NODE_ENV=production, seeder escluso)
+# Production / Release Mode (loads .env with NODE_ENV=production, seeder excluded)
 npm run build
 npm run start:prod
 ```
 
-Il servizio sarà in ascolto su: `http://localhost:3000`
+The service will be listening on: `http://localhost:3000`
 
 ---
 
-## 📖 Documentazione Interattiva Swagger (OpenAPI)
+## 📖 Interactive Swagger Documentation (OpenAPI)
 
-Una volta avviato il servizio, la documentazione Swagger interattiva è accessibile all'indirizzo:
+Once the service is started, interactive Swagger documentation is accessible at:
 👉 **[http://localhost:3000/api/docs](http://localhost:3000/api/docs)**
 
-### 📥 Download della Specifica OpenAPI (JSON / YAML)
-Per importare le API in tool come Postman, Insomnia o generatori di client SDK, la specifica OpenAPI grezza è esportata ed accessibile direttamente ai seguenti endpoint:
+### 📥 Download OpenAPI Specification (JSON / YAML)
+To import APIs into tools like Postman, Insomnia, or client SDK generators, raw OpenAPI specifications are exported and directly accessible at:
 - **OpenAPI JSON:** [http://localhost:3000/api/docs-json](http://localhost:3000/api/docs-json)
 - **OpenAPI YAML:** [http://localhost:3000/api/docs-yaml](http://localhost:3000/api/docs-yaml)
 
 ---
 
-## 🧪 Esecuzione dei Test
+## 🧪 Running Tests
 
-### 1. Unit Test (`ProductsService`)
-Esegue i test unitari in totale isolamento mockando il Model Sequelize (`getModelToken(Product)`), testando la logica di business, il calcolo di offset/limit e la simulazione delle eccezioni:
+### 1. Unit Tests (`ProductsService`)
+Runs unit tests in complete isolation by mocking the Sequelize Model (`getModelToken(Product)`), testing business logic, offset/limit calculation, and exception simulations:
 ```bash
 npm test
 ```
 
-### 2. E2E Integration Test (Contro MySQL 8.0 Reale)
-I test E2E girano sul database dedicato `ecommerce_test` per verificare fedelmente il comportamento di MySQL (DECIMAL, vincoli UNIQUE, Soft Delete con `{ paranoid: false }` e Optimistic Locking concorrente con `Promise.all`):
+### 2. E2E Integration Tests (Against Real MySQL 8.0)
+E2E tests run on the dedicated `ecommerce_test` database to authentically verify MySQL behavior (DECIMAL, UNIQUE constraints, Soft Delete with `{ paranoid: false }`, and concurrent Optimistic Locking with `Promise.all`):
 ```bash
 npm run test:e2e
 ```
@@ -186,12 +186,12 @@ npm run test:cov
 
 ---
 
-## 📡 Esempi d'Uso API (cURL e JSON)
+## 📡 API Usage Examples (cURL and JSON)
 
-### 1. Creazione Prodotto (`POST /products`)
-Crea un nuovo prodotto nel catalogo. Se il `productToken` esiste già, ritorna `409 Conflict`.
+### 1. Create Product (`POST /products`)
+Creates a new product in the catalog. If `productToken` already exists, returns `409 Conflict`.
 
-**Richiesta:**
+**Request:**
 ```bash
 curl -X POST http://localhost:3000/products \
   -H "Content-Type: application/json" \
@@ -204,7 +204,7 @@ curl -X POST http://localhost:3000/products \
   }'
 ```
 
-**Risposta di successo (`201 Created`):**
+**Success Response (`201 Created`):**
 ```json
 {
   "id": 1,
@@ -219,7 +219,7 @@ curl -X POST http://localhost:3000/products \
 }
 ```
 
-**Risposta di conflitto in caso di duplicato (`409 Conflict`):**
+**Conflict Response on duplicate (`409 Conflict`):**
 ```json
 {
   "statusCode": 409,
@@ -233,16 +233,16 @@ curl -X POST http://localhost:3000/products \
 
 ---
 
-### 2. Lista Paginata Prodotti (`GET /products`)
-Recupera l'elenco paginato dei soli prodotti attivi (escludendo i soft-deleted).
+### 2. Paginated Products List (`GET /products`)
+Retrieves the paginated list of active products only (excluding soft-deleted ones).
 
-**Richiesta:**
+**Request:**
 ```bash
 curl -X GET "http://localhost:3000/products?page=1&limit=10" \
   -H "Accept: application/json"
 ```
 
-**Risposta (`200 OK`):**
+**Response (`200 OK`):**
 ```json
 {
   "data": [
@@ -267,11 +267,11 @@ curl -X GET "http://localhost:3000/products?page=1&limit=10" \
 }
 ```
 
-**Protezione Abuso Paginazione (`limit > 100`):**
+**Pagination Abuse Protection (`limit > 100`):**
 ```bash
 curl -X GET "http://localhost:3000/products?limit=500"
 ```
-**Risposta (`400 Bad Request`):**
+**Response (`400 Bad Request`):**
 ```json
 {
   "statusCode": 400,
@@ -287,16 +287,16 @@ curl -X GET "http://localhost:3000/products?limit=500"
 
 ---
 
-### 3. Dettaglio Prodotto per ID (`GET /products/:id`)
-Recupera un singolo prodotto attivo. Se inesistente o soft-deleted, ritorna `404 Not Found`.
+### 3. Product Details by ID (`GET /products/:id`)
+Retrieves a single active product. If non-existent or soft-deleted, returns `404 Not Found`.
 
-**Richiesta:**
+**Request:**
 ```bash
 curl -X GET http://localhost:3000/products/1 \
   -H "Accept: application/json"
 ```
 
-**Risposta (`200 OK`):**
+**Response (`200 OK`):**
 ```json
 {
   "id": 1,
@@ -313,10 +313,10 @@ curl -X GET http://localhost:3000/products/1 \
 
 ---
 
-### 4. Aggiornamento Stock con Optimistic Locking (`PATCH /products/:id/stock`)
-Aggiorna la quantità di stock. Se il client invia il campo opzionale `version` e questo non coincide con la versione attuale nel database, oppure se due client tentano di aggiornare simultaneamente lo stesso record, l'operazione viene respinta con `409 Conflict`.
+### 4. Stock Update with Optimistic Locking (`PATCH /products/:id/stock`)
+Updates stock quantity. If the client sends the optional `version` field and it does not match the current version in the database, or if two clients attempt to update the same record simultaneously, the operation is rejected with `409 Conflict`.
 
-**Richiesta:**
+**Request:**
 ```bash
 curl -X PATCH http://localhost:3000/products/1/stock \
   -H "Content-Type: application/json" \
@@ -326,7 +326,7 @@ curl -X PATCH http://localhost:3000/products/1/stock \
   }'
 ```
 
-**Risposta di successo (`200 OK` - versione incrementata a 2):**
+**Success Response (`200 OK` - version incremented to 2):**
 ```json
 {
   "id": 1,
@@ -341,7 +341,7 @@ curl -X PATCH http://localhost:3000/products/1/stock \
 }
 ```
 
-**Risposta di conflitto per disallineamento versione (`409 Conflict`):**
+**Conflict Response due to version mismatch (`409 Conflict`):**
 ```json
 {
   "statusCode": 409,
@@ -356,20 +356,20 @@ curl -X PATCH http://localhost:3000/products/1/stock \
 ---
 
 ### 5. Soft Delete (`DELETE /products/:id`)
-Esegue la rimozione logica del prodotto valorizzando `deletedAt`. Preserva la cronologia degli ordini.
+Performs logical deletion of the product by populating `deletedAt`. Preserves order history.
 
-**Richiesta:**
+**Request:**
 ```bash
 curl -X DELETE http://localhost:3000/products/1 -i
 ```
 
-**Risposta (`204 No Content`):**
+**Response (`204 No Content`):**
 ```http
 HTTP/1.1 204 No Content
 X-Request-Id: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 ```
 
-Una successiva chiamata `GET /products/1` o `DELETE /products/1` restituirà:
+A subsequent call to `GET /products/1` or `DELETE /products/1` will return:
 ```json
 {
   "statusCode": 404,
@@ -380,13 +380,13 @@ Una successiva chiamata `GET /products/1` o `DELETE /products/1` restituirà:
   "requestId": "..."
 }
 ```
-Nonostante la risposta 404, interrogando direttamente la tabella MySQL con `SELECT * FROM products WHERE id = 1` o tramite Sequelize con `{ paranoid: false }`, il record è fisicamente conservato con il relativo timestamp in `deletedAt`.
+Despite the 404 response, querying the MySQL table directly with `SELECT * FROM products WHERE id = 1` or via Sequelize with `{ paranoid: false }`, the record is physically preserved along with its `deletedAt` timestamp.
 
 ---
 
-## 🛡️ Gestione Errori Standardizzata
+## 🛡️ Standardized Error Handling
 
-Tutti gli errori HTTP restituiti dall'applicazione seguono uno schema uniforme:
+All HTTP errors returned by the application follow a uniform schema:
 
 ```json
 {
@@ -401,20 +401,20 @@ Tutti gli errori HTTP restituiti dall'applicazione seguono uno schema uniforme:
 
 ---
 
-## 💻 Utilizzo Programmatico del Modulo NestJS (Dependency Injection)
+## 💻 Programmatic Usage of NestJS Module (Dependency Injection)
 
-Oltre all'esposizione tramite API REST/HTTP, `ProductsModule` esporta `ProductsService` per permettere ad altri moduli della piattaforma di interagire direttamente con il catalogo tramite la **Dependency Injection** nativa di NestJS. Nel progetto sono implementati e funzionanti **due use case reali**:
+In addition to REST/HTTP API exposure, `ProductsModule` exports `ProductsService` to allow other modules within the platform to interact directly with the catalog via native NestJS **Dependency Injection**. The project implements and demonstrates **two real-world use cases**:
 
 ---
 
-### Caso 1: Modulo `OrdersModule` (Checkout con Rateizzazione Scalapay 3x)
-Simula il flusso di checkout di una piattaforma e-commerce / BNPL (Buy Now Pay Later). L'`OrdersService` consuma programmaticamente `ProductsService`:
-1. **Verifica esistenza e prezzo**: invoca `productsService.findOne(productId)`.
-2. **Validazione disponibilità**: controlla che la quantità richiesta sia disponibile in magazzino.
-3. **Decremento concorrente protetto**: invoca `productsService.updateStock(productId, { stock: newStock, version: product.version })` sfruttando l'Optimistic Locking contro gli over-selling concorrenti.
-4. **Calcolo finanziario esatto**: genera il piano di pagamento in 3 rate a tasso zero stile Scalapay (con compensazione esatta dei centesimi).
+### Case 1: `OrdersModule` (Checkout with Scalapay 3x Installments)
+Simulates the checkout flow of an e-commerce / BNPL (Buy Now Pay Later) platform. `OrdersService` programmatically consumes `ProductsService`:
+1. **Verify existence and price**: calls `productsService.findOne(productId)`.
+2. **Validate availability**: checks that the requested quantity is available in stock.
+3. **Protected concurrent decrement**: calls `productsService.updateStock(productId, { stock: newStock, version: product.version })`, leveraging Optimistic Locking against concurrent over-selling.
+4. **Exact financial calculation**: generates the interest-free 3-installment payment schedule Scalapay-style (with exact penny/cent remainder compensation).
 
-#### Iniezione ed Esecuzione in `OrdersService`:
+#### Injection and Execution in `OrdersService`:
 ```typescript
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { ProductsService } from '../products/products.service';
@@ -426,21 +426,21 @@ export class OrdersService {
   constructor(private readonly productsService: ProductsService) {}
 
   async createOrder(dto: CreateOrderDto, requestId?: string): Promise<OrderResponseDto> {
-    // 1. Lettura programmatica da ProductsService
+    // 1. Programmatic retrieval from ProductsService
     const product = await this.productsService.findOne(dto.productId, requestId);
 
     if (product.stock < dto.quantity) {
       throw new BadRequestException(`Insufficient stock for product "${product.name}"`);
     }
 
-    // 2. Aggiornamento programmatico con Optimistic Locking
+    // 2. Programmatic update with Optimistic Locking
     const updated = await this.productsService.updateStock(
       product.id,
       { stock: product.stock - dto.quantity, version: product.version },
       requestId,
     );
 
-    // 3. Calcolo rate Scalapay BNPL (totale diviso in 3 rate)
+    // 3. Scalapay BNPL installment calculation (total split into 3 installments)
     const totalAmount = Number((product.price * dto.quantity).toFixed(2));
     const installments = this.calculateInstallments(totalAmount);
 
@@ -459,9 +459,9 @@ export class OrdersService {
 }
 ```
 
-#### Esempio di Chiamata API Checkout (`POST /orders`)
+#### Checkout API Call Example (`POST /orders`)
 
-**Richiesta:**
+**Request:**
 ```bash
 curl -X POST http://localhost:3000/orders \
   -H "Content-Type: application/json" \
@@ -472,7 +472,7 @@ curl -X POST http://localhost:3000/orders \
   }'
 ```
 
-**Risposta di successo (`201 Created`):**
+**Success Response (`201 Created`):**
 ```json
 {
   "orderId": "ord-7f3b8a1c",
@@ -505,10 +505,10 @@ curl -X POST http://localhost:3000/orders \
 
 ---
 
-### Caso 2: `CatalogSeederService` (Auto-popolamento per Sviluppo Locale)
-Implementa il lifecycle hook `OnApplicationBootstrap` di NestJS in `src/seeder/catalog-seeder.service.ts`:
-1. All'avvio dell'applicazione, verifica l'ambiente: viene eseguito **esclusivamente se `NODE_ENV === 'development'`** (impostato automaticamente tramite `npm run start:dev` o `npm start` con `.env.development`).
-2. Se il database è vuoto (`total === 0`), inserisce 4 prodotti di test realistici (Sony Headphones, iPhone 15, MacBook Air, Logitech Mouse) tramite chiamate successive a `productsService.create()`.
-3. In produzione (`.env`, `npm run start:prod`) e nei test (`NODE_ENV === 'test'`), l'auto-seeder viene **tassativamente ignorato** per garantire la sicurezza dei dati di produzione e l'isolamento deterministico dei test.
+### Case 2: `CatalogSeederService` (Auto-population for Local Development)
+Implements NestJS's `OnApplicationBootstrap` lifecycle hook in `src/seeder/catalog-seeder.service.ts`:
+1. Upon application startup, verifies the environment: runs **exclusively if `NODE_ENV === 'development'`** (automatically set via `npm run start:dev` or `npm start` using `.env.development`).
+2. If the database is empty (`total === 0`), inserts 4 realistic test products (Sony Headphones, iPhone 15, MacBook Air, Logitech Mouse) via sequential calls to `productsService.create()`.
+3. In production (`.env`, `npm run start:prod`) and tests (`NODE_ENV === 'test'`), the auto-seeder is **strictly ignored** to ensure production data safety and deterministic test isolation.
 
-In questo modo, chi sviluppa o recensisce il codice in locale trova subito il catalogo popolato ed esplorabile su Swagger, mentre l'ambiente di produzione (`.env`) rimane pulito e protetto.
+This way, developers or reviewers testing locally immediately find a populated catalog ready to explore on Swagger, while the production environment (`.env`) remains clean and protected.

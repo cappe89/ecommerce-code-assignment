@@ -1,26 +1,26 @@
-# Architettura e Modello Dati (Sequelize + MySQL)
+# Architecture and Data Model (Sequelize + MySQL)
 
-## Schema Database: Tabella `products`
+## Database Schema: `products` Table
 - `id`: INT, Primary Key, Auto-Increment.
-- `productToken`: VARCHAR(255), UNIQUE, NOT NULL. Identificativo esterno/business univoco del prodotto.
+- `productToken`: VARCHAR(255), UNIQUE, NOT NULL. Unique external/business identifier for the product.
 - `name`: VARCHAR(255), NOT NULL.
-- `price`: DECIMAL(10, 2), NOT NULL (evita errori di arrotondamento floating-point in ambito e-commerce/fintech).
+- `price`: DECIMAL(10, 2), NOT NULL (prevents floating-point rounding errors in e-commerce/fintech contexts).
 - `stock`: INT, NOT NULL, DEFAULT 0, CHECK (`stock >= 0`).
-- `version`: INT, NOT NULL, DEFAULT 1 (gestito automaticamente da Sequelize per l'Optimistic Locking).
-- `createdAt`, `updatedAt`: Timestamp automatici.
-- `deletedAt`: Timestamp nullable (gestito automaticamente da Sequelize per il Soft Delete).
+- `version`: INT, NOT NULL, DEFAULT 1 (automatically managed by Sequelize for Optimistic Locking).
+- `createdAt`, `updatedAt`: Automatic timestamps.
+- `deletedAt`: Nullable timestamp (automatically managed by Sequelize for Soft Delete).
 
-## Configurazione Model & Performance Database
-- **Soft Delete (`paranoid: true`)**: Abilitato sul model `Product`. Le operazioni `destroy()` popolano `deletedAt` senza cancellare fisicamente il record, e le query di lettura escludono automaticamente i record eliminati.
-- **Optimistic Locking (`version: true`)**: Abilitato sul model `Product`. Ogni `update()` verifica e incrementa la colonna `version`, prevenendo il problema del *Lost Update* in caso di modifiche concorrenti.
-- **Indici Espliciti (`indexes`)**:
-  - Indice univoco su `productToken`.
-  - Indice composito o dedicato su `createdAt` (e `deletedAt`) per ottimizzare le prestazioni delle query paginate (`GET /products`) ed evitare full table scan al crescere del catalogo.
+## Model Configuration & Database Performance
+- **Soft Delete (`paranoid: true`)**: Enabled on the `Product` model. `destroy()` operations populate `deletedAt` without physically deleting the record, and read queries automatically exclude deleted records.
+- **Optimistic Locking (`version: true`)**: Enabled on the `Product` model. Every `update()` checks and increments the `version` column, preventing *Lost Update* issues during concurrent modifications.
+- **Explicit Indexes (`indexes`)**:
+  - Unique index on `productToken`.
+  - Composite or dedicated index on `createdAt` (and `deletedAt`) to optimize paginated query performance (`GET /products`) and prevent full table scans as the catalog grows.
 
-## Scelte Architetturali NestJS
-- **Layered Modular Monolith**: Un modulo isolato `ProductsModule` contenente Controller, Service, Model Sequelize, DTOs e Test (evitando over-engineering come CQRS non giustificato dalla dimensione del dominio).
-- **Dependency Injection**: Sfruttare `@InjectModel(Product)` tramite `@nestjs/sequelize`.
+## NestJS Architectural Decisions
+- **Layered Modular Monolith**: An isolated `ProductsModule` containing Controller, Service, Sequelize Model, DTOs, and Tests (avoiding over-engineering such as CQRS, which is unjustified given the domain size).
+- **Dependency Injection**: Leverage `@InjectModel(Product)` via `@nestjs/sequelize`.
 - **Separation of Concerns**:
-  - **Controller**: Gestione HTTP, validazione input tramite DTO, status codes e decoratori Swagger.
-  - **Service**: Logica di business, gestione transazioni/lock e logging contestuale con `X-Request-Id`.
-  - **Global Exception Filter**: Intercettazione centralizzata di `SequelizeUniqueConstraintError` e `SequelizeOptimisticLockError` -> HTTP `409 Conflict`.
+  - **Controller**: HTTP handling, input validation via DTOs, status codes, and Swagger decorators.
+  - **Service**: Business logic, transaction/lock management, and contextual logging with `X-Request-Id`.
+  - **Global Exception Filter**: Centralized interception of `SequelizeUniqueConstraintError` and `SequelizeOptimisticLockError` -> HTTP `409 Conflict`.
