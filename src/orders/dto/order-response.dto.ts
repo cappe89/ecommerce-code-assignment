@@ -4,17 +4,14 @@ export class InstallmentDto {
   @ApiProperty({ example: 1, description: 'Installment sequence number (1, 2, or 3)' })
   installmentNumber: number;
 
-  @ApiProperty({ example: 116.66, description: 'Amount due for this installment' })
+  @ApiProperty({ example: 283.33, description: 'Amount due for this installment' })
   amount: number;
 
-  @ApiProperty({ example: '2026-11-16', description: 'Due date for this installment (YYYY-MM-DD)' })
+  @ApiProperty({ example: '2026-11-18', description: 'Due date for this installment (YYYY-MM-DD)' })
   dueDate: string;
 }
 
-export class OrderResponseDto {
-  @ApiProperty({ example: 'ord-8f92b7c4', description: 'Unique order reference identifier' })
-  orderId: string;
-
+export class PurchasedItemDto {
   @ApiProperty({ example: 1, description: 'Purchased product ID' })
   productId: number;
 
@@ -27,7 +24,24 @@ export class OrderResponseDto {
   @ApiProperty({ example: 2, description: 'Purchased quantity' })
   quantity: number;
 
-  @ApiProperty({ example: 699.98, description: 'Total order amount' })
+  @ApiProperty({ example: 699.98, description: 'Subtotal price for this item' })
+  subtotal: number;
+
+  @ApiProperty({ example: 48, description: 'Remaining stock after purchase' })
+  remainingStock: number;
+}
+
+export class OrderResponseDto {
+  @ApiProperty({ example: 'ord-8f92b7c4', description: 'Unique order reference identifier' })
+  orderId: string;
+
+  @ApiProperty({
+    type: [PurchasedItemDto],
+    description: 'List of purchased items with pricing and inventory details',
+  })
+  items: PurchasedItemDto[];
+
+  @ApiProperty({ example: 849.97, description: 'Total order amount across all items' })
   totalAmount: number;
 
   @ApiProperty({
@@ -35,9 +49,6 @@ export class OrderResponseDto {
     description: 'Scalapay 3x interest-free installment schedule (today, +30d, +60d)',
   })
   installments: InstallmentDto[];
-
-  @ApiProperty({ example: 48, description: 'Updated available stock after order placement' })
-  remainingStock: number;
 
   @ApiProperty({ description: 'Order creation timestamp' })
   createdAt: string;

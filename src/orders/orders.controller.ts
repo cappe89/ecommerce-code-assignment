@@ -32,22 +32,22 @@ export class OrdersController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Place an order (Checkout with 3x Scalapay installments)',
+    summary: 'Place a multi-item order (Transactional checkout with 3x Scalapay installments)',
     description:
-      'Demonstrates programmatic usage of ProductsService: verifies availability via findOne(), updates inventory via updateStock() with optimistic concurrency locking, and calculates a 3-installment BNPL payment plan.',
+      'Demonstrates programmatic and transactional consumption of ProductsService: accepts a list of items with quantities, verifies inventory availability, and decrements stock within a managed database transaction. Commits only if all updates succeed; otherwise rolls back completely.',
   })
   @ApiCreatedResponse({
-    description: 'Order placed successfully with 3-installment payment plan',
+    description: 'Order placed successfully within an atomic transaction with 3-installment payment plan',
     type: OrderResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Insufficient stock or invalid input parameter',
+    description: 'Insufficient stock or invalid input parameter for one or more items (transaction rolled back)',
   })
   @ApiNotFoundResponse({
-    description: 'Product not found or soft-deleted',
+    description: 'One or more products not found or soft-deleted (transaction rolled back)',
   })
   @ApiConflictResponse({
-    description: 'Optimistic lock conflict: stock was concurrently modified by another transaction',
+    description: 'Optimistic lock conflict: one or more products concurrently modified (transaction rolled back)',
   })
   async create(
     @Body() createOrderDto: CreateOrderDto,

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
-import { OptimisticLockError } from 'sequelize';
+import { OptimisticLockError, Transaction } from 'sequelize';
 import { Product } from './models/product.model';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateStockDto } from './dto/update-stock.dto';
@@ -85,13 +85,20 @@ export class ProductsService {
 
   /**
    * Retrieves a single active product by its primary ID.
+   * Accepts an optional Sequelize transaction to support atomic multi-operation workflows.
    * Returns 404 Not Found if the product does not exist or has been soft-deleted.
    */
-  async findOne(id: number, requestId?: string): Promise<Product> {
+  async findOne(
+    id: number,
+    requestId?: string,
+    transaction?: Transaction,
+  ): Promise<Product> {
     const logPrefix = requestId ? `[${requestId}] ` : '';
     this.logger.log(`${logPrefix}Finding product with ID: ${id}`);
 
-    const product = await this.productModel.findByPk(id);
+    const product = transaction
+      ? await this.productModel.findByPk(id, { transaction })
+      : await this.productModel.findByPk(id);
 
     if (!product) {
       this.logger.warn(`${logPrefix}Product with ID ${id} not found or soft-deleted`);
@@ -103,6 +110,7 @@ export class ProductsService {
 
   /**
    * Updates product stock with Optimistic Locking concurrency protection.
+   * Supports execution within a managed Sequelize transaction.
    * If another transaction has modified the record concurrently, an OptimisticLockError is thrown,
    * which is caught by the GlobalExceptionFilter and returned as 409 Conflict.
    */
@@ -110,13 +118,14 @@ export class ProductsService {
     id: number,
     updateStockDto: UpdateStockDto,
     requestId?: string,
+    transaction?: Transaction,
   ): Promise<Product> {
     const logPrefix = requestId ? `[${requestId}] ` : '';
     this.logger.log(
       `${logPrefix}Updating stock for product ID ${id} to: ${updateStockDto.stock}`,
     );
 
-    const product = await this.findOne(id, requestId);
+    const product = await this.findOne(id, requestId, transaction);
 
     // If client supplied an explicit version, check it before persisting
     if (
@@ -132,7 +141,11 @@ export class ProductsService {
     }
 
     product.stock = updateStockDto.stock;
-    await product.save();
+    if (transaction) {
+      await product.save({ transaction });
+    } else {
+      await product.save();
+    }
 
     this.logger.log(
       `${logPrefix}Stock updated successfully for product ID ${id}. New stock: ${product.stock}, new version: ${product.version}`,
