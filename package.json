@@ -1,5 +1,5 @@
 {
-  "name": "ecommerce-products-microservice",
+  "name": "products-service",
   "version": "1.0.0",
   "description": "Products Microservice built with NestJS, Sequelize, and MySQL",
   "author": "Alessandro Cappelletti",

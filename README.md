@@ -507,43 +507,77 @@ Simulates the checkout flow of an e-commerce / BNPL (Buy Now Pay Later) platform
 
 #### Injection and Execution in `OrdersService`:
 ```typescript
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { InjectConnection } from '@nestjs/sequelize';
+import { Sequelize } from 'sequelize-typescript';
+import { Transaction } from 'sequelize';
 import { ProductsService } from '../products/products.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { OrderResponseDto } from './dto/order-response.dto';
+import { OrderResponseDto, PurchasedItemDto } from './dto/order-response.dto';
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    @InjectConnection()
+    private readonly sequelize: Sequelize,
+  ) {}
 
-  async createOrder(dto: CreateOrderDto, requestId?: string): Promise<OrderResponseDto> {
-    // 1. Programmatic retrieval from ProductsService
-    const product = await this.productsService.findOne(dto.productId, requestId);
+  async createOrder(createOrderDto: CreateOrderDto, requestId?: string): Promise<OrderResponseDto> {
+    const { items } = createOrderDto;
 
-    if (product.stock < dto.quantity) {
-      throw new BadRequestException(`Insufficient stock for product "${product.name}"`);
+    // Consolidate duplicate products in the cart
+    const consolidatedMap = new Map<number, number>();
+    for (const item of items) {
+      consolidatedMap.set(item.productId, (consolidatedMap.get(item.productId) || 0) + item.quantity);
     }
 
-    // 2. Programmatic update with Optimistic Locking
-    const updated = await this.productsService.updateStock(
-      product.id,
-      { stock: product.stock - dto.quantity, version: product.version },
-      requestId,
-    );
+    // Execute within an atomic Sequelize managed transaction (ACID)
+    const purchasedItems = await this.sequelize.transaction(async (transaction: Transaction) => {
+      const results: PurchasedItemDto[] = [];
 
-    // 3. Scalapay BNPL installment calculation (total split into 3 installments)
-    const totalAmount = Number((product.price * dto.quantity).toFixed(2));
+      for (const [productId, quantity] of consolidatedMap.entries()) {
+        // 1. Programmatic retrieval from ProductsService within transaction
+        const product = await this.productsService.findOne(productId, requestId, transaction);
+
+        if (product.stock < quantity) {
+          throw new BadRequestException(
+            `Insufficient stock for product "${product.name}". Requested ${quantity}, but only ${product.stock} available.`,
+          );
+        }
+
+        // 2. Programmatic stock update with Optimistic Locking within transaction
+        const updated = await this.productsService.updateStock(
+          product.id,
+          { stock: product.stock - quantity, version: product.version },
+          requestId,
+          transaction,
+        );
+
+        const unitPrice = product.price;
+        const subtotal = Number((unitPrice * quantity).toFixed(2));
+
+        results.push({
+          productId: product.id,
+          productName: product.name,
+          unitPrice,
+          quantity,
+          subtotal,
+          remainingStock: updated.stock,
+        });
+      }
+
+      return results;
+    });
+
+    const totalAmount = Number(purchasedItems.reduce((acc, item) => acc + item.subtotal, 0).toFixed(2));
     const installments = this.calculateInstallments(totalAmount);
 
     return {
       orderId: `ord-${randomUUID().slice(0, 8)}`,
-      productId: product.id,
-      productName: product.name,
-      unitPrice: product.price,
-      quantity: dto.quantity,
+      items: purchasedItems,
       totalAmount,
       installments,
-      remainingStock: updated.stock,
       createdAt: new Date().toISOString(),
     };
   }
@@ -558,8 +592,12 @@ curl -X POST http://localhost:3000/orders \
   -H "Content-Type: application/json" \
   -H "X-Request-Id: checkout-trace-001" \
   -d '{
-    "productId": 1,
-    "quantity": 2
+    "items": [
+      {
+        "productId": 1,
+        "quantity": 2
+      }
+    ]
   }'
 ```
 
@@ -567,30 +605,35 @@ curl -X POST http://localhost:3000/orders \
 ```json
 {
   "orderId": "ord-7f3b8a1c",
-  "productId": 1,
-  "productName": "Sony WH-1000XM5 Wireless Headphones",
-  "unitPrice": 349.99,
-  "quantity": 2,
+  "items": [
+    {
+      "productId": 1,
+      "productName": "Sony WH-1000XM5 Wireless Headphones",
+      "unitPrice": 349.99,
+      "quantity": 2,
+      "subtotal": 699.98,
+      "remainingStock": 48
+    }
+  ],
   "totalAmount": 699.98,
   "installments": [
     {
       "installmentNumber": 1,
       "amount": 233.33,
-      "dueDate": "2026-11-16"
+      "dueDate": "2026-11-19"
     },
     {
       "installmentNumber": 2,
       "amount": 233.33,
-      "dueDate": "2026-12-16"
+      "dueDate": "2026-12-19"
     },
     {
       "installmentNumber": 3,
       "amount": 233.32,
-      "dueDate": "2027-01-15"
+      "dueDate": "2027-01-18"
     }
   ],
-  "remainingStock": 48,
-  "createdAt": "2026-11-16T22:50:00.000Z"
+  "createdAt": "2026-11-19T12:00:00.000Z"
 }
 ```
 
